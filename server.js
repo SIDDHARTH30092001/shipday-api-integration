@@ -1,37 +1,43 @@
-const express = require("express");
-const cors = require("cors");
-const Shipday = require("shipday/integration");
-
+const express = require('express');
+const axios = require('axios');
 const app = express();
-const port = process.env.PORT || 3000;
+
+// Enable CORS if frontend and backend are on different origins
+const cors = require('cors');
 app.use(cors());
 
-// Directly using trial API key
-const shipdayClient = new Shipday("n8hQZtKH0x.xe6ycVBN1KKRsPFWVdQ5", 10000);
+const port = 3000; // Or any other port of your choice
 
-app.get("/track", async (req, res) => {
+// Replace with your API key
+const apiKey = "Basic n8hQZtKH0x.xe6ycVBN1KKRsPFWVdQ5";
+
+// API endpoint to track orders
+app.get('/track', async (req, res) => {
   const orderNumber = req.query.order;
-  if (!orderNumber) return res.status(400).json({ message: "Missing order number" });
+  if (!orderNumber) return res.status(400).json({ message: "Order number is required." });
+
+  const encodedOrder = encodeURIComponent(orderNumber);
+  const url = `https://api.shipday.com/orders/${encodedOrder}`;
 
   try {
-    const orders = await shipdayClient.orderService.getOrders();
-    const order = orders.find(o => o.orderNumber === orderNumber.toString());
+    const response = await axios.get(url, {
+      headers: { Authorization: apiKey },
+    });
 
-    if (!order) return res.status(404).json({ message: "Order not found" });
+    const data = response.data[0]; // Since the response is an array, we select the first element
 
     const {
       orderId,
       orderNumber: trackingId,
       orderItems,
       activityLog,
-      costing,
+      paymentMethod,
       customer,
       orderStatus,
-      orderStatusAdmin,
       assignedCarrier,
       trackingLink,
       deliveryInstruction
-    } = order;
+    } = data;
 
     const orderDate = activityLog?.placementTime
       ? new Date(activityLog.placementTime).toLocaleString()
@@ -39,7 +45,8 @@ app.get("/track", async (req, res) => {
 
     const estimatedDelivery = activityLog?.expectedDeliveryDate || null;
 
-    res.json({
+    // Structure the response data
+    const result = {
       orderId,
       trackingId,
       orderDate,
@@ -48,9 +55,12 @@ app.get("/track", async (req, res) => {
         quantity: item.quantity,
         addOns: item.addOns,
       })),
-      paymentStatus: costing?.totalCost > 0 ? "Paid" : "Pending",
+      payment: {
+        method: paymentMethod || "N/A",  // Payment method
+        totalCost: data.costing?.totalCost ?? 0.00,  // Total cost
+      },
       status: orderStatus?.orderState,
-      statusAdmin: orderStatusAdmin,
+      statusAdmin: orderStatus?.orderStateAdmin,
       estimatedDelivery,
       expectedDeliveryTime: activityLog?.expectedDeliveryTime,
       customerAddress: customer?.address,
@@ -61,11 +71,15 @@ app.get("/track", async (req, res) => {
         phone: assignedCarrier.phoneNumber,
       } : null,
       trackingLink,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Internal server error" });
+    };
+
+    res.json(result);
+  } catch (error) {
+    console.error("Error fetching order details:", error);
+    res.status(500).json({ message: "Error fetching order details." });
   }
 });
 
-app.listen(port, () => console.log(`🚀 Server running on http://localhost:${port}`));
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+});
